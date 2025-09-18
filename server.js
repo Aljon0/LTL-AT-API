@@ -4,6 +4,8 @@ import dotenv from 'dotenv';
 import express from 'express';
 import Groq from 'groq-sdk';
 import multer from 'multer';
+import nodemailer from 'nodemailer';
+import Stripe from 'stripe';
 
 // Configure dotenv
 dotenv.config();
@@ -11,34 +13,88 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Initialize GROQ client
+// Initialize services
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
 
-// Configure multer for file uploads (in-memory)
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+// Synchronous email transporter creation
+const createEmailTransporter = () => {
+  try {
+    // Primary: Gmail configuration
+    if (process.env.EMAIL_USER && process.env.EMAIL_PASSWORD) {
+      console.log('Creating Gmail transporter...');
+      console.log('Email user:', process.env.EMAIL_USER);
+      console.log('Password length:', process.env.EMAIL_PASSWORD.length);
+      
+      return nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+          user: process.env.EMAIL_USER,
+          pass: process.env.EMAIL_PASSWORD,
+        },
+      });
+    }
+    
+    // Secondary: Custom SMTP configuration
+    if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+      console.log('Creating custom SMTP transporter...');
+      return nodemailer.createTransport({
+        host: process.env.SMTP_HOST,
+        port: process.env.SMTP_PORT || 587,
+        secure: process.env.SMTP_SECURE === 'true',
+        auth: {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS,
+        },
+      });
+    }
+    
+    console.warn('No email configuration found');
+    return null;
+    
+  } catch (error) {
+    console.error('Email transporter creation failed:', error.message);
+    return null;
+  }
+};
+
+// Initialize email transporter synchronously
+const emailTransporter = createEmailTransporter();
+
+// Test email connection on startup
+if (emailTransporter) {
+  emailTransporter.verify()
+    .then(() => {
+      console.log('Email service verified and ready');
+    })
+    .catch((error) => {
+      console.error('Email verification failed:', error.message);
+    });
+} else {
+  console.warn('Email service not configured - emails will be disabled');
+}
+
+// Configure multer for file uploads
 const storage = multer.memoryStorage();
 const upload = multer({ 
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const allowedTypes = [
-      'application/pdf', 
-      'text/plain'
-    ];
+    const allowedTypes = ['application/pdf', 'text/plain'];
     cb(null, allowedTypes.includes(file.mimetype));
   }
 });
 
-// Helper function to extract text from documents (simplified)
+// Helper function to extract text from documents
 async function extractTextFromDocument(file) {
   try {
     console.log(`Processing file: ${file.originalname}, type: ${file.mimetype}, size: ${file.size}`);
     
     switch (file.mimetype) {
       case 'application/pdf':
-        // For now, return a placeholder - we'll add PDF parsing later
-        console.log(`PDF file received: ${file.originalname} (${file.size} bytes)`);
         return `[PDF Document: ${file.originalname} - PDF text extraction will be implemented. File contains ${file.size} bytes of content.]`;
       
       case 'text/plain':
@@ -52,7 +108,6 @@ async function extractTextFromDocument(file) {
         }
       
       default:
-        console.warn(`Unsupported file type: ${file.mimetype}`);
         return `[Unsupported file type: ${file.mimetype}]`;
     }
   } catch (error) {
@@ -61,25 +116,275 @@ async function extractTextFromDocument(file) {
   }
 }
 
+// Enhanced email templates
+function createLinkedInPostEmailTemplate(postContent, userProfile) {
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your LinkedIn Post is Ready</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; 
+            line-height: 1.6; 
+            color: #27272a; 
+            background: linear-gradient(135deg, #f4f4f5 0%, #e4e4e7 50%, #d4d4d8 100%);
+            padding: 20px;
+        }
+        .container { 
+            max-width: 600px; 
+            margin: 0 auto; 
+            background: rgba(255, 255, 255, 0.95); 
+            backdrop-filter: blur(10px);
+            border-radius: 24px; 
+            overflow: hidden; 
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            border: 1px solid rgba(228, 228, 231, 0.6);
+        }
+        .header { 
+            background: linear-gradient(135deg, #18181b, #27272a); 
+            padding: 40px 32px; 
+            text-align: center; 
+            position: relative;
+            overflow: hidden;
+        }
+        .header h1 { 
+            color: white; 
+            font-size: 32px; 
+            font-weight: 700; 
+            margin-bottom: 8px;
+        }
+        .header p { 
+            color: #d4d4d8; 
+            font-size: 18px;
+            font-weight: 500;
+        }
+        .content { 
+            padding: 48px 32px; 
+        }
+        .post-preview { 
+            background: linear-gradient(135deg, #f9fafb, #f4f4f5);
+            border: 2px solid #e4e4e7; 
+            border-radius: 16px; 
+            padding: 32px; 
+            margin: 32px 0; 
+            position: relative;
+            box-shadow: 0 10px 25px -12px rgba(0, 0, 0, 0.1);
+        }
+        .post-content { 
+            font-size: 16px; 
+            line-height: 1.7; 
+            color: #374151; 
+            white-space: pre-wrap;
+            font-weight: 500;
+        }
+        .cta-button { 
+            display: inline-block; 
+            background: linear-gradient(135deg,rgb(49, 52, 54),rgb(25, 29, 31));
+            color: white; 
+            padding: 20px 40px; 
+            border-radius: 12px; 
+            text-decoration: none; 
+            font-weight: 600; 
+            font-size: 16px;
+            box-shadow: 0 8px 25px -8px rgba(0, 119, 181, 0.5);
+        }
+        .footer { 
+            background: linear-gradient(135deg, #f9fafb, #f4f4f5);
+            padding: 32px; 
+            border-top: 1px solid #e4e4e7; 
+            text-align: center; 
+            color: #6b7280; 
+            font-size: 14px;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Your LinkedIn Post is Ready!</h1>
+            <p>Generated specifically for your professional brand</p>
+        </div>
+        
+        <div class="content">
+            <h2>Here's your AI-generated LinkedIn post:</h2>
+            
+            <div class="post-preview">
+                <div class="post-content">${postContent}</div>
+            </div>
+            
+            <div style="text-align: center; margin: 40px 0;">
+                <a href="https://linkedin.com/feed" class="cta-button" target="_blank">
+                    Post to LinkedIn →
+                </a>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <div style="font-weight: 700; color: #18181b; margin-bottom: 8px;">ThoughtLeader AI</div>
+            <p>Automated LinkedIn Content Generation</p>
+            <p style="margin-top: 16px; font-size: 12px;">This email was sent to ${userProfile?.email || 'your email'}</p>
+        </div>
+    </div>
+</body>
+</html>`;
+}
+
+function createReceiptEmailTemplate(receiptData, userProfile) {
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment Receipt - ThoughtLeader AI</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; background-color: #f5f5f5; }
+        .container { max-width: 600px; margin: 0 auto; background: white; }
+        .header { background: linear-gradient(135deg, #18181b, #27272a); padding: 32px; text-align: center; color: white; }
+        .content { padding: 32px; }
+        .receipt-details { background: #f9fafb; padding: 24px; border-radius: 8px; margin: 20px 0; }
+        .total { font-size: 24px; font-weight: bold; color: #059669; text-align: center; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Payment Successful!</h1>
+            <p>Receipt #${receiptData.receiptNumber}</p>
+        </div>
+        <div class="content">
+            <h2>Thank you for your purchase!</h2>
+            <div class="receipt-details">
+                <p><strong>Plan:</strong> ${receiptData.planName}</p>
+                <p><strong>Amount:</strong> $${receiptData.amount}</p>
+                <p><strong>Date:</strong> ${receiptData.date}</p>
+                <p><strong>Transaction ID:</strong> ${receiptData.transactionId}</p>
+            </div>
+            <div class="total">Total Paid: $${receiptData.amount}</div>
+            <p>Your premium features are now active. Start creating amazing content!</p>
+        </div>
+    </div>
+</body>
+</html>`;
+}
+
 // Middleware
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:5173',
   credentials: true,
 }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// ===== EXISTING LINKEDIN AUTH ENDPOINTS =====
+// Request logging
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  next();
+});
 
-// LinkedIn OAuth endpoint
+// ===== EMAIL CONFIGURATION TEST ENDPOINT =====
+app.get('/api/test-email-config', async (req, res) => {
+  try {
+    console.log('Testing email configuration...');
+    console.log('EMAIL_USER:', process.env.EMAIL_USER ? 'SET' : 'NOT SET');
+    console.log('EMAIL_PASSWORD:', process.env.EMAIL_PASSWORD ? 'SET (length: ' + process.env.EMAIL_PASSWORD.length + ')' : 'NOT SET');
+    
+    if (!emailTransporter) {
+      return res.status(500).json({ 
+        error: 'Email transporter not initialized',
+        config: {
+          emailUser: !!process.env.EMAIL_USER,
+          emailPassword: !!process.env.EMAIL_PASSWORD,
+          passwordLength: process.env.EMAIL_PASSWORD?.length || 0
+        }
+      });
+    }
+    
+    // Test the connection
+    const verified = await emailTransporter.verify();
+    
+    res.json({ 
+      success: true,
+      message: 'Email configuration is working',
+      verified: verified,
+      config: {
+        emailUser: !!process.env.EMAIL_USER,
+        emailPassword: !!process.env.EMAIL_PASSWORD,
+        passwordLength: process.env.EMAIL_PASSWORD?.length || 0
+      }
+    });
+    
+  } catch (error) {
+    console.error('Email config test failed:', error);
+    res.status(500).json({ 
+      error: 'Email configuration test failed',
+      details: error.message,
+      code: error.code,
+      config: {
+        emailUser: !!process.env.EMAIL_USER,
+        emailPassword: !!process.env.EMAIL_PASSWORD,
+        passwordLength: process.env.EMAIL_PASSWORD?.length || 0
+      }
+    });
+  }
+});
+
+// Add this endpoint to your server.js file
+app.post('/api/upgrade-subscription', async (req, res) => {
+  try {
+    const { userId, planId, amount, paymentIntentId } = req.body;
+
+    if (!userId || !planId) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    console.log(`Upgrading user ${userId} to ${planId} plan`);
+
+    // In a real implementation, you would:
+    // 1. Verify the payment with Stripe
+    // 2. Update user subscription in your database
+    // 3. Send confirmation email
+
+    // For test mode, we'll just simulate success
+    const receiptData = {
+      receiptNumber: `RCT-${Date.now().toString().slice(-8)}`,
+      transactionId: paymentIntentId || `txn_${Math.random().toString(36).substr(2, 9)}`,
+      amount: amount,
+      planName: planId,
+      date: new Date().toLocaleDateString()
+    };
+
+    res.json({
+      success: true,
+      message: 'Subscription upgraded successfully (test mode)',
+      receiptData
+    });
+
+  } catch (error) {
+    console.error('Error upgrading subscription:', error);
+    res.status(500).json({ 
+      error: 'Failed to upgrade subscription', 
+      details: error.message 
+    });
+  }
+});
+
+// ===== AUTHENTICATION ENDPOINTS =====
 app.post('/api/auth/linkedin/callback', async (req, res) => {
   try {
     const { code, redirectUri } = req.body;
 
-    console.log('Received LinkedIn callback:', { code: !!code, redirectUri });
-
     if (!code) {
       return res.status(400).json({ error: 'Authorization code is required' });
+    }
+
+    if (!process.env.LINKEDIN_CLIENT_ID || !process.env.LINKEDIN_CLIENT_SECRET) {
+      return res.status(500).json({ error: 'LinkedIn configuration error' });
     }
 
     const params = new URLSearchParams();
@@ -93,23 +398,19 @@ app.post('/api/auth/linkedin/callback', async (req, res) => {
       'https://www.linkedin.com/oauth/v2/accessToken',
       params.toString(),
       {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        timeout: 10000
       }
     );
 
     const { access_token } = tokenResponse.data;
-    console.log('Got LinkedIn access token');
-
     const profileResponse = await axios.get('https://api.linkedin.com/v2/userinfo', {
-      headers: {
-        Authorization: `Bearer ${access_token}`,
-      },
+      headers: { Authorization: `Bearer ${access_token}` },
+      timeout: 10000
     });
 
     const linkedInUser = profileResponse.data;
-    console.log('Got LinkedIn user profile:', linkedInUser.name);
+    console.log('LinkedIn user authenticated:', linkedInUser.name);
 
     res.json({
       success: true,
@@ -127,7 +428,6 @@ app.post('/api/auth/linkedin/callback', async (req, res) => {
     console.error('LinkedIn OAuth error:', error);
     
     if (error.response) {
-      console.error('LinkedIn API error:', error.response.data);
       return res.status(error.response.status).json({
         error: 'LinkedIn authentication failed',
         details: error.response.data
@@ -141,15 +441,18 @@ app.post('/api/auth/linkedin/callback', async (req, res) => {
   }
 });
 
-// Simple user endpoints
 app.post('/api/auth/user', async (req, res) => {
   try {
     const { uid, email, name, avatar, provider } = req.body;
     
+    if (!uid || !email) {
+      return res.status(400).json({ error: 'UID and email are required' });
+    }
+    
     const user = {
       id: uid,
       email,
-      name,
+      name: name || email.split('@')[0],
       avatar: avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(name || 'User')}&background=6366f1&color=ffffff`,
       provider: provider || 'google',
       isAdmin: false,
@@ -164,39 +467,35 @@ app.post('/api/auth/user', async (req, res) => {
   }
 });
 
-app.get('/api/auth/user/:uid', async (req, res) => {
-  try {
-    const { uid } = req.params;
-    res.json({ user: null });
-  } catch (error) {
-    console.error('Error getting user profile:', error);
-    res.status(500).json({ error: 'Failed to get user profile' });
-  }
-});
-
-// ===== DOCUMENT PROCESSING ENDPOINT =====
-
-// Process documents and return extracted text
+// ===== DOCUMENT PROCESSING =====
 app.post('/api/process-documents', upload.array('documents'), async (req, res) => {
   try {
     console.log('=== Document Processing Request ===');
     console.log('Files received:', req.files?.length || 0);
     
     if (!req.files || req.files.length === 0) {
-      return res.json({ documentContext: '', processedFiles: 0, totalCharacters: 0 });
+      return res.json({ 
+        documentContext: '', 
+        processedFiles: 0, 
+        totalCharacters: 0,
+        message: 'No documents provided'
+      });
     }
 
-    console.log('Processing uploaded documents...');
-    const documentTexts = await Promise.all(
-      req.files.map(async (file, index) => {
-        console.log(`Processing file ${index + 1}/${req.files.length}: ${file.originalname}`);
+    const documentTexts = [];
+    
+    for (let i = 0; i < req.files.length; i++) {
+      const file = req.files[i];
+      try {
         const text = await extractTextFromDocument(file);
-        return `--- ${file.originalname} ---\n${text}\n`;
-      })
-    );
+        documentTexts.push(`--- ${file.originalname} ---\n${text}\n`);
+      } catch (fileError) {
+        console.error(`Error processing file ${file.originalname}:`, fileError);
+        documentTexts.push(`--- ${file.originalname} ---\n[Error processing file: ${fileError.message}]\n`);
+      }
+    }
     
     const documentContext = documentTexts.join('\n');
-    console.log(`Processing complete: ${documentContext.length} characters from ${req.files.length} documents`);
 
     res.json({ 
       documentContext,
@@ -214,38 +513,40 @@ app.post('/api/process-documents', upload.array('documents'), async (req, res) =
   }
 });
 
-// Generate LinkedIn post using GROQ with document context
+// ===== AI CONTENT GENERATION =====
 app.post('/api/generate-post', async (req, res) => {
   try {
     const { userId, prompt, context, profileData, documentContext } = req.body;
 
     console.log('=== Post Generation Request ===');
     console.log('User ID:', userId);
-    console.log('Prompt:', prompt);
-    console.log('Has document context:', !!documentContext);
+    console.log('Prompt length:', prompt?.length || 0);
     console.log('Document context length:', documentContext?.length || 0);
 
-    if (!profileData) {
-      return res.status(400).json({ error: 'Profile data is required' });
+    if (!userId || !prompt || !profileData) {
+      return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // Construct enhanced prompt with user context
+    if (!process.env.GROQ_API_KEY) {
+      return res.status(500).json({ error: 'AI service configuration error' });
+    }
+
     const systemPrompt = `You are a LinkedIn content creator helping ${profileData.linkedinUrl ? 'a professional' : 'someone'} create engaging posts.
 
 User's Profile:
-- Goals: ${profileData.goals}
-- Voice Style: ${profileData.voiceStyle}
-- Topics: ${profileData.topics?.join(', ')}
-- LinkedIn URL: ${profileData.linkedinUrl}
+- Goals: ${profileData.goals || 'Not specified'}
+- Voice Style: ${profileData.voiceStyle || 'Professional'}
+- Topics: ${profileData.topics?.join(', ') || 'General business'}
+- LinkedIn URL: ${profileData.linkedinUrl || 'Not provided'}
 
 ${documentContext ? `
 Additional Context from User's Documents:
-${documentContext.substring(0, 2000)}...
+${documentContext.substring(0, 2000)}${documentContext.length > 2000 ? '...' : ''}
 ` : ''}
 
 Create a LinkedIn post that:
-1. Matches their ${profileData.voiceStyle} voice style
-2. Aligns with their goals: ${profileData.goals}
+1. Matches their ${profileData.voiceStyle || 'professional'} voice style
+2. Aligns with their goals: ${profileData.goals || 'professional growth'}
 3. Is relevant to their topics of interest
 4. Uses insights from their provided documents (if available)
 5. Is engaging and professional
@@ -255,70 +556,241 @@ Create a LinkedIn post that:
 Post topic/prompt: ${prompt}
 ${context ? `Additional context: ${context}` : ''}`;
 
-    console.log('Sending request to GROQ...');
     const completion = await groq.chat.completions.create({
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: prompt }
       ],
-      model: "mixtral-8x7b-32768",
+      model: "llama-3.3-70b-versatile",
       temperature: 0.7,
       max_tokens: 1000,
     });
 
     const generatedPost = completion.choices[0]?.message?.content;
-    console.log('Post generated successfully');
+    
+    if (!generatedPost) {
+      throw new Error('No content generated from AI service');
+    }
 
     res.json({ 
       post: generatedPost,
       metadata: {
-        model: "mixtral-8x7b-32768",
+        model: "llama-3.3-70b-versatile",
         timestamp: new Date().toISOString(),
         usedDocumentContext: !!documentContext,
-        documentContextLength: documentContext?.length || 0
+        documentContextLength: documentContext?.length || 0,
+        userId: userId
       }
     });
   } catch (error) {
     console.error('Error generating post:', error);
-    res.status(500).json({ error: 'Failed to generate post', details: error.message });
+    res.status(500).json({ 
+      error: 'Failed to generate post', 
+      details: error.message 
+    });
   }
 });
 
-// Health check endpoint
+// ===== EMAIL SERVICES =====
+app.post('/api/send-test-email', async (req, res) => {
+  try {
+    const { userId, postContent, userEmail } = req.body;
+
+    console.log('=== Email Send Request ===');
+    console.log('User ID:', userId);
+    console.log('User Email:', userEmail);
+    console.log('Content Length:', postContent?.length || 0);
+    console.log('Email transporter available:', !!emailTransporter);
+
+    if (!userId || !postContent) {
+      return res.status(400).json({ error: 'User ID and post content are required' });
+    }
+
+    if (!userEmail) {
+      return res.status(400).json({ error: 'User email is required' });
+    }
+
+    // Check if email transporter is available
+    if (!emailTransporter) {
+      console.error('Email transporter not available');
+      return res.status(500).json({ 
+        error: 'Email service not configured',
+        details: 'Please check server email configuration. Visit /api/test-email-config for diagnostics.'
+      });
+    }
+
+    const mailOptions = {
+      from: `"ThoughtLeader AI" <${process.env.EMAIL_USER || 'noreply@thoughtleader.ai'}>`,
+      to: userEmail,
+      subject: '🚀 Your LinkedIn Post is Ready!',
+      html: createLinkedInPostEmailTemplate(postContent, { email: userEmail })
+    };
+
+    console.log('Attempting to send email to:', userEmail);
+    
+    try {
+      const info = await emailTransporter.sendMail(mailOptions);
+      console.log('Email sent successfully:', info.messageId);
+      
+      res.json({ 
+        message: 'Email sent successfully',
+        sentTo: userEmail,
+        messageId: info.messageId
+      });
+    } catch (emailError) {
+      console.error('Email sending failed:', emailError);
+      
+      // Provide more specific error messages
+      if (emailError.code === 'EAUTH') {
+        return res.status(500).json({ 
+          error: 'Email authentication failed. Please check your Gmail app password.',
+          details: 'Make sure you have 2FA enabled and are using an app password, not your regular password.'
+        });
+      } else if (emailError.code === 'ECONNECTION') {
+        return res.status(500).json({ 
+          error: 'Cannot connect to email server. Please check your internet connection.',
+          details: emailError.message
+        });
+      } else {
+        return res.status(500).json({ 
+          error: 'Failed to send email',
+          details: emailError.message
+        });
+      }
+    }
+
+  } catch (error) {
+    console.error('Error in send-test-email endpoint:', error);
+    res.status(500).json({ 
+      error: 'Internal server error', 
+      details: error.message 
+    });
+  }
+});
+
+// ===== STRIPE PAYMENT PROCESSING =====
+app.post('/api/create-payment-intent', async (req, res) => {
+  try {
+    const { amount, currency = 'usd', planId, userId } = req.body;
+
+    if (!amount || !planId || !userId) {
+      return res.status(400).json({ error: 'Missing required payment data' });
+    }
+
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: Math.round(amount * 100), // Convert to cents
+      currency,
+      metadata: {
+        planId,
+        userId,
+        timestamp: new Date().toISOString()
+      }
+    });
+
+    res.json({
+      clientSecret: paymentIntent.client_secret,
+      paymentIntentId: paymentIntent.id
+    });
+
+  } catch (error) {
+    console.error('Error creating payment intent:', error);
+    res.status(500).json({ 
+      error: 'Failed to create payment intent', 
+      details: error.message 
+    });
+  }
+});
+
+app.post('/api/confirm-payment', async (req, res) => {
+  try {
+    const { paymentIntentId, userEmail, userName } = req.body;
+
+    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+    
+    if (paymentIntent.status === 'succeeded') {
+      const receiptData = {
+        receiptNumber: `RCT-${Date.now().toString().slice(-8)}`,
+        transactionId: paymentIntent.id,
+        amount: paymentIntent.amount / 100,
+        planName: paymentIntent.metadata.planId,
+        date: new Date().toLocaleDateString()
+      };
+
+      // Send receipt email if transporter is available
+      if (userEmail && emailTransporter) {
+        try {
+          const mailOptions = {
+            from: `"ThoughtLeader AI" <${process.env.EMAIL_USER || 'noreply@thoughtleader.ai'}>`,
+            to: userEmail,
+            subject: 'Payment Receipt - ThoughtLeader AI',
+            html: createReceiptEmailTemplate(receiptData, { email: userEmail, name: userName })
+          };
+
+          await emailTransporter.sendMail(mailOptions);
+          console.log('Receipt email sent to:', userEmail);
+        } catch (emailError) {
+          console.error('Failed to send receipt email:', emailError);
+          // Don't fail the payment confirmation if email fails
+        }
+      }
+
+      res.json({
+        success: true,
+        receiptData,
+        message: 'Payment confirmed' + (emailTransporter ? ' and receipt sent' : '')
+      });
+    } else {
+      res.status(400).json({ error: 'Payment not completed' });
+    }
+
+  } catch (error) {
+    console.error('Error confirming payment:', error);
+    res.status(500).json({ 
+      error: 'Failed to confirm payment', 
+      details: error.message 
+    });
+  }
+});
+
+// ===== HEALTH CHECK =====
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'OK', 
     timestamp: new Date().toISOString(),
-    message: 'LinkedIn Auth API is running',
+    message: 'ThoughtLeader AI API is running',
     env: {
       hasLinkedInClientId: !!process.env.LINKEDIN_CLIENT_ID,
       hasLinkedInClientSecret: !!process.env.LINKEDIN_CLIENT_SECRET,
       hasGroqApiKey: !!process.env.GROQ_API_KEY,
+      hasEmailConfig: !!(process.env.EMAIL_USER && process.env.EMAIL_PASSWORD) || 
+                     !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS),
+      emailTransporterStatus: emailTransporter ? 'configured' : 'not configured',
+      hasStripeKey: !!process.env.STRIPE_SECRET_KEY,
       port: PORT,
-      frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173'
+      frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
+      nodeEnv: process.env.NODE_ENV || 'development'
     }
   });
 });
 
-// Error handling middleware
+// Error handling
 app.use((err, req, res, next) => {
   console.error('Express Error:', err.stack);
   res.status(500).json({ 
     error: 'Something went wrong!',
-    message: process.env.NODE_ENV === 'development' ? err.message : undefined
+    message: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
   });
 });
 
-// 404 handler
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
 
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔗 CORS enabled for: ${process.env.FRONTEND_URL || 'http://localhost:5173'}`);
-  console.log(`🔑 LinkedIn Client ID: ${process.env.LINKEDIN_CLIENT_ID ? 'SET' : 'MISSING'}`);
-  console.log(`🔐 LinkedIn Client Secret: ${process.env.LINKEDIN_CLIENT_SECRET ? 'SET' : 'MISSING'}`);
-  console.log(`🤖 GROQ API Key: ${process.env.GROQ_API_KEY ? 'SET' : 'MISSING'}`);
+  console.log(`📧 Email Config: ${process.env.EMAIL_USER && process.env.EMAIL_PASSWORD ? 'SET' : 'MISSING'}`);
+  console.log(`💳 Stripe Config: ${process.env.STRIPE_SECRET_KEY ? 'SET' : 'MISSING'}`);
+  console.log(`📬 Email Transporter: ${emailTransporter ? 'READY' : 'NOT AVAILABLE'}`);
+  console.log('✅ Server ready with email and payment processing');
+  console.log('🔧 Test email config at: http://localhost:3001/api/test-email-config');
 });
