@@ -1,4 +1,3 @@
-import axios from 'axios';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import express from 'express';
@@ -29,7 +28,7 @@ const createEmailTransporter = () => {
       console.log('Email user:', process.env.EMAIL_USER);
       console.log('Password length:', process.env.EMAIL_PASSWORD.length);
       
-      return nodemailer.createTransport({
+      return nodemailer.createTransporter({
         service: 'gmail',
         auth: {
           user: process.env.EMAIL_USER,
@@ -41,7 +40,7 @@ const createEmailTransporter = () => {
     // Secondary: Custom SMTP configuration
     if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
       console.log('Creating custom SMTP transporter...');
-      return nodemailer.createTransport({
+      return nodemailer.createTransporter({
         host: process.env.SMTP_HOST,
         port: process.env.SMTP_PORT || 587,
         secure: process.env.SMTP_SECURE === 'true',
@@ -261,11 +260,11 @@ function createReceiptEmailTemplate(receiptData, userProfile) {
             <h2>Thank you for your purchase!</h2>
             <div class="receipt-details">
                 <p><strong>Plan:</strong> ${receiptData.planName}</p>
-                <p><strong>Amount:</strong> $${receiptData.amount}</p>
+                <p><strong>Amount:</strong> ${receiptData.amount}</p>
                 <p><strong>Date:</strong> ${receiptData.date}</p>
                 <p><strong>Transaction ID:</strong> ${receiptData.transactionId}</p>
             </div>
-            <div class="total">Total Paid: $${receiptData.amount}</div>
+            <div class="total">Total Paid: ${receiptData.amount}</div>
             <p>Your premium features are now active. Start creating amazing content!</p>
         </div>
     </div>
@@ -375,72 +374,6 @@ app.post('/api/upgrade-subscription', async (req, res) => {
 });
 
 // ===== AUTHENTICATION ENDPOINTS =====
-app.post('/api/auth/linkedin/callback', async (req, res) => {
-  try {
-    const { code, redirectUri } = req.body;
-
-    if (!code) {
-      return res.status(400).json({ error: 'Authorization code is required' });
-    }
-
-    if (!process.env.LINKEDIN_CLIENT_ID || !process.env.LINKEDIN_CLIENT_SECRET) {
-      return res.status(500).json({ error: 'LinkedIn configuration error' });
-    }
-
-    const params = new URLSearchParams();
-    params.append('grant_type', 'authorization_code');
-    params.append('code', code);
-    params.append('redirect_uri', redirectUri);
-    params.append('client_id', process.env.LINKEDIN_CLIENT_ID);
-    params.append('client_secret', process.env.LINKEDIN_CLIENT_SECRET);
-
-    const tokenResponse = await axios.post(
-      'https://www.linkedin.com/oauth/v2/accessToken',
-      params.toString(),
-      {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        timeout: 10000
-      }
-    );
-
-    const { access_token } = tokenResponse.data;
-    const profileResponse = await axios.get('https://api.linkedin.com/v2/userinfo', {
-      headers: { Authorization: `Bearer ${access_token}` },
-      timeout: 10000
-    });
-
-    const linkedInUser = profileResponse.data;
-    console.log('LinkedIn user authenticated:', linkedInUser.name);
-
-    res.json({
-      success: true,
-      user: {
-        id: linkedInUser.sub,
-        email: linkedInUser.email,
-        name: linkedInUser.name,
-        picture: linkedInUser.picture,
-        provider: 'linkedin'
-      },
-      accessToken: access_token
-    });
-
-  } catch (error) {
-    console.error('LinkedIn OAuth error:', error);
-    
-    if (error.response) {
-      return res.status(error.response.status).json({
-        error: 'LinkedIn authentication failed',
-        details: error.response.data
-      });
-    }
-    
-    res.status(500).json({ 
-      error: 'Failed to authenticate with LinkedIn',
-      details: error.message 
-    });
-  }
-});
-
 app.post('/api/auth/user', async (req, res) => {
   try {
     const { uid, email, name, avatar, provider } = req.body;
@@ -759,8 +692,6 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     message: 'ThoughtLeader AI API is running',
     env: {
-      hasLinkedInClientId: !!process.env.LINKEDIN_CLIENT_ID,
-      hasLinkedInClientSecret: !!process.env.LINKEDIN_CLIENT_SECRET,
       hasGroqApiKey: !!process.env.GROQ_API_KEY,
       hasEmailConfig: !!(process.env.EMAIL_USER && process.env.EMAIL_PASSWORD) || 
                      !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS),
