@@ -1,4 +1,3 @@
-import cors from 'cors';
 import dotenv from 'dotenv';
 import express from 'express';
 import Groq from 'groq-sdk';
@@ -19,7 +18,24 @@ const groq = new Groq({
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// Synchronous email transporter creation
+// FIXED CORS Configuration - This will work for your local development
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  res.header('Access-Control-Allow-Origin', origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS,PATCH');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    console.log(`Preflight request from: ${origin}`);
+    res.sendStatus(200);
+  } else {
+    next();
+  }
+});
+
+// Synchronous email transporter creation - FIXED
 const createEmailTransporter = () => {
   try {
     // Primary: Gmail configuration
@@ -28,7 +44,8 @@ const createEmailTransporter = () => {
       console.log('Email user:', process.env.EMAIL_USER);
       console.log('Password length:', process.env.EMAIL_PASSWORD.length);
       
-      return nodemailer.createTransporter({
+      // FIXED: Use nodemailer.createTransport (not createTransporter)
+      return nodemailer.createTransport({
         service: 'gmail',
         auth: {
           user: process.env.EMAIL_USER,
@@ -40,7 +57,8 @@ const createEmailTransporter = () => {
     // Secondary: Custom SMTP configuration
     if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
       console.log('Creating custom SMTP transporter...');
-      return nodemailer.createTransporter({
+      // FIXED: Use nodemailer.createTransport (not createTransporter)
+      return nodemailer.createTransport({
         host: process.env.SMTP_HOST,
         port: process.env.SMTP_PORT || 587,
         secure: process.env.SMTP_SECURE === 'true',
@@ -272,18 +290,24 @@ function createReceiptEmailTemplate(receiptData, userProfile) {
 </html>`;
 }
 
-// Middleware
-app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
-  credentials: true,
-}));
+// Other middleware
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Request logging
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  const origin = req.get('origin') || 'no-origin';
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path} from ${origin}`);
   next();
+});
+
+// ===== TEST CORS ENDPOINT =====
+app.get('/api/test-cors', (req, res) => {
+  res.json({ 
+    message: 'CORS is working!',
+    origin: req.headers.origin,
+    timestamp: new Date().toISOString()
+  });
 });
 
 // ===== EMAIL CONFIGURATION TEST ENDPOINT =====
@@ -403,8 +427,10 @@ app.post('/api/auth/user', async (req, res) => {
 // ===== DOCUMENT PROCESSING =====
 app.post('/api/process-documents', upload.array('documents'), async (req, res) => {
   try {
+    const origin = req.get('origin') || 'no-origin';
     console.log('=== Document Processing Request ===');
     console.log('Files received:', req.files?.length || 0);
+    console.log('Request origin:', origin);
     
     if (!req.files || req.files.length === 0) {
       return res.json({ 
@@ -430,6 +456,7 @@ app.post('/api/process-documents', upload.array('documents'), async (req, res) =
     
     const documentContext = documentTexts.join('\n');
 
+    console.log('✅ Document processing successful');
     res.json({ 
       documentContext,
       processedFiles: req.files.length,
@@ -438,7 +465,7 @@ app.post('/api/process-documents', upload.array('documents'), async (req, res) =
     });
 
   } catch (error) {
-    console.error('Error processing documents:', error);
+    console.error('❌ Error processing documents:', error);
     res.status(500).json({ 
       error: 'Failed to process documents', 
       details: error.message 
@@ -698,7 +725,6 @@ app.get('/health', (req, res) => {
       emailTransporterStatus: emailTransporter ? 'configured' : 'not configured',
       hasStripeKey: !!process.env.STRIPE_SECRET_KEY,
       port: PORT,
-      frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
       nodeEnv: process.env.NODE_ENV || 'development'
     }
   });
@@ -722,6 +748,7 @@ app.listen(PORT, () => {
   console.log(`📧 Email Config: ${process.env.EMAIL_USER && process.env.EMAIL_PASSWORD ? 'SET' : 'MISSING'}`);
   console.log(`💳 Stripe Config: ${process.env.STRIPE_SECRET_KEY ? 'SET' : 'MISSING'}`);
   console.log(`📬 Email Transporter: ${emailTransporter ? 'READY' : 'NOT AVAILABLE'}`);
+  console.log(`🌐 CORS: Fixed for all origins`);
   console.log('✅ Server ready with email and payment processing');
-  console.log('🔧 Test email config at: http://localhost:3001/api/test-email-config');
+  console.log('🔧 Test CORS at: http://localhost:3001/api/test-cors');
 });
