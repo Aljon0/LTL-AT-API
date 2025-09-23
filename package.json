@@ -13,14 +13,16 @@
   "type": "module",
   "dependencies": {
     "@supabase/supabase-js": "^2.57.2",
-    "axios": "^1.11.0",
+    "axios": "^1.12.2",
     "cors": "^2.8.5",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
     "groq-sdk": "^0.32.0",
     "multer": "^2.0.2",
+    "node-cron": "^4.2.1",
     "nodemailer": "^7.0.6",
     "path-to-regexp": "^8.3.0",
+    "rss-parser": "^3.13.0",
     "stripe": "^18.5.0"
   }
 }
