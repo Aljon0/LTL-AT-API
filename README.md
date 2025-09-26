@@ -37,12 +37,3 @@ Built with **Node.js (Express)** and integrated with:
 - [Nodemailer](https://nodemailer.com/)
 
 ---
-
-## 📦 Installation & Setup
-
-### 1. Clone Repository
-
-```bash
-git clone https://github.com/your-username/linkedin-ai-posting.git
-cd linkedin-ai-posting/backend
-```
